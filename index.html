@@ -258,6 +258,7 @@ img { max-width: 100%; }
       <li class="row"><label for="optMusic">Play with music<small>Beeps mix with YouTube Music or Spotify instead of pausing it. Needs the screen on.</small></label><input id="optMusic" class="switch" type="checkbox"></li>
       <li class="row"><label for="optWarm">Warm-up and cool-down<small>5-minute walk at each end</small></label><input id="optWarm" class="switch" type="checkbox"></li>
       <li class="row"><label for="optVoice">Voice cues<small>Says “Run” or “Walk” after each beep, while the screen is on</small></label><input id="optVoice" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optDuck">Lower music while speaking<small>Android only. Your music dips for a few seconds during each voice cue.</small></label><input id="optDuck" class="switch" type="checkbox"></li>
       <li class="row"><label for="optVibe">Vibrate<small>Buzzes on each switch while the screen is on (Android only)</small></label><input id="optVibe" class="switch" type="checkbox"></li>
       <li class="row"><label for="optKg">Your weight (kg)<small>Only used to estimate calories</small></label><input id="optKg" type="number" inputmode="decimal" min="30" max="250" step="0.5" placeholder="e.g. 82"></li>
       <li class="row"><label for="btnTest">Sound check<small>Plays the run beep, then the walk beep</small></label><button id="btnTest" class="small-btn" type="button">Test</button></li>
@@ -331,7 +332,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let settings = Object.assign({ level: 1, music: true, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('strideshift.settings', {}));
+let settings = Object.assign({ level: 1, music: true, duck: true, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('strideshift.settings', {}));
 let log = store.get('strideshift.log', []);
 const saveSettings = () => store.set('strideshift.settings', settings);
 
@@ -469,8 +470,20 @@ const soundNote = () => settings.music
   ? 'Beeps play alongside your music. Keep the screen on: tap Lock screen and pocket the phone. On iPhone, the silent switch mutes the beeps.'
   : 'Beeps keep playing with the screen off, but they pause other music. On iPhone, the silent switch mutes them.';
 
+// Chrome asks other apps to duck (not pause) for media shorter than ~5 s, so a short
+// silent clip lowers the music for as long as it plays. iOS has no web equivalent.
+const duckAudio = new Audio();
+let duckUrl = null, lastDuck = 0;
+function duck() {
+  if (!settings.duck || !settings.voice || state.engine !== 'beeps' || Date.now() - lastDuck < 3000) return;
+  lastDuck = Date.now();
+  duckUrl = duckUrl || URL.createObjectURL(renderWav(4, []));
+  duckAudio.src = duckUrl;
+  duckAudio.play().catch(() => {});
+}
 function say(text) {
   if (!settings.voice || !('speechSynthesis' in window)) return;
+  duck();
   try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; speechSynthesis.speak(u); } catch {}
 }
 function buzz(pattern) { if (settings.vibe) try { navigator.vibrate && navigator.vibrate(pattern); } catch {} }
@@ -613,6 +626,7 @@ function enter(i, prev) {
     walk: 'Walk.',
     cool: 'Cool down. Walk easy.',
   }[s.type];
+  duck();
   setTimeout(() => say(words), 650);
   buzz(s.type === 'run' ? [250, 100, 250, 100, 250] : [700]);
 }
@@ -833,6 +847,7 @@ const bindSwitch = (id, key, after) => {
 bindSwitch('optMusic', 'music', () => { if (!busy()) $('soundNote').textContent = soundNote(); });
 bindSwitch('optWarm', 'warm', renderIdle);
 bindSwitch('optVoice', 'voice');
+bindSwitch('optDuck', 'duck');
 bindSwitch('optVibe', 'vibe');
 $('optKg').value = settings.kg;
 $('optKg').addEventListener('input', e => { settings.kg = e.target.value; saveSettings(); renderLog(); });

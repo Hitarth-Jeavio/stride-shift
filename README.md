@@ -25,6 +25,8 @@ Each session has a 5-minute warm-up walk and a 5-minute cool-down walk around th
 
 Voice cues and vibration only work while the screen is on.
 
+**Lower music while speaking** (Android): each voice cue also plays a short silent clip, which makes Chrome ask your music app to dip its volume for a few seconds. iOS gives web pages no way to do this.
+
 During a session, **Lock screen** keeps the display on but ignores touches, so the phone can sit in a pocket or armband. Hold the lock icon for 1.5 seconds to unlock.
 
 Add it to your home screen to use it like an app (it has an icon and opens without the browser bar).
