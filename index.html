@@ -6,6 +6,11 @@
 <meta name="description" content="Run-walk interval timer for weight loss with level progression, beeps and voice cues, and a weekly log.">
 <meta name="theme-color" content="#c93a22">
 <title>Stride Shift</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Stride Shift">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -83,6 +88,32 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn:disabled { opacity: .35; cursor: default; }
 .btn.armed { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
 .fine { margin: 0; font-size: .82rem; opacity: .8; }
+.btn.lockbtn { width: 100%; min-height: 48px; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn.lockbtn svg { width: 18px; height: 18px; }
+
+/* Touch lock: a deliberately always-dark layer (black saves battery on OLED screens) */
+.lock {
+  --lk-c: #a3b3c7;
+  position: fixed; inset: 0; z-index: 100; background: #000; color: var(--lk-c);
+  display: grid; grid-template-rows: 1fr auto; justify-items: center; text-align: center;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 16px calc(28px + env(safe-area-inset-bottom, 0px));
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+.lock[data-phase="run"] { --lk-c: #ff6b4f; }
+.lock[data-phase="walk"], .lock[data-phase="done"] { --lk-c: #3cc4d8; }
+.lock-main { align-self: center; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.lock-phase { font-family: var(--f-display); font-weight: 700; font-size: 2.6rem; text-transform: uppercase; letter-spacing: .08em; line-height: 1; }
+.lock-clock { font-family: var(--f-display); font-weight: 700; font-size: clamp(7rem, 40vw, 15rem); line-height: .85; font-variant-numeric: tabular-nums; }
+.lock-sub { font-family: var(--f-display); font-size: 1.3rem; letter-spacing: .05em; text-transform: uppercase; color: #8b97a4; font-variant-numeric: tabular-nums; }
+.unlock { display: flex; flex-direction: column; align-items: center; gap: 8px; background: none; border: 0; padding: 0; color: #c9d1da; touch-action: none; }
+.unlock-ring { position: relative; width: 84px; height: 84px; }
+.unlock-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.unlock-ring .track { fill: none; stroke: #2b3138; stroke-width: 5; }
+.unlock-ring .prog { fill: none; stroke: var(--lk-c); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 238.76; stroke-dashoffset: 238.76; transform: rotate(-90deg); transform-origin: 50% 50%; }
+.unlock-ring .glyph { position: absolute; inset: 0; margin: auto; width: 30px; height: 30px; }
+.unlock-label { font-size: .85rem; letter-spacing: .08em; text-transform: uppercase; color: #8b97a4; }
+.unlock:focus-visible { outline-color: var(--lk-c); }
+html.locked, html.locked body { overflow: hidden; overscroll-behavior: none; }
 
 .done { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
 .done h3 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: .04em; }
@@ -184,8 +215,28 @@ img { max-width: 100%; }
       <button id="btnSkip" class="btn ghost" type="button" disabled>Skip</button>
       <button id="btnStop" class="btn ghost" type="button" disabled>End</button>
     </div>
+    <button id="btnLock" class="btn lockbtn" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="none"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      Lock screen
+    </button>
     <p id="soundNote" class="fine">Beeps keep playing with the screen off. Keep your phone off silent; on iPhone the ring/silent switch mutes them.</p>
   </section>
+
+  <div id="lockLayer" class="lock" data-phase="warm" hidden>
+    <div class="lock-main" aria-live="polite">
+      <div id="lkPhase" class="lock-phase"></div>
+      <div id="lkClock" class="lock-clock"></div>
+      <div id="lkRound" class="lock-sub"></div>
+      <div id="lkNext" class="lock-sub"></div>
+    </div>
+    <button id="unlockBtn" class="unlock" type="button" aria-label="Hold to unlock">
+      <span class="unlock-ring">
+        <svg viewBox="0 0 84 84" aria-hidden="true"><circle class="track" cx="42" cy="42" r="38"/><circle id="unlockProg" class="prog" cx="42" cy="42" r="38"/></svg>
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="none"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+      </span>
+      <span class="unlock-label">Hold to unlock</span>
+    </button>
+  </div>
 
   <div id="doneCard" class="done" hidden>
     <h3 id="doneTitle">Session complete</h3>
@@ -382,9 +433,10 @@ function say(text) {
 }
 function buzz(pattern) { if (settings.vibe) try { navigator.vibrate && navigator.vibrate(pattern); } catch {} }
 
-let wakeLock = null;
+let wakeLock = null, locked = false;
 async function keepAwake() { try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch {} }
-function releaseAwake() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
+// the touch lock keeps the screen on even while paused or finished
+function releaseAwake() { if (locked) return; try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
 
 /* Session engine */
 let plan = buildPlan(currentCfg(), settings.warm);
@@ -554,6 +606,8 @@ function render(t, i) {
   setMarker(t);
   $('btnStart').textContent = state.status === 'running' ? 'Pause' : state.status === 'paused' ? 'Resume' : 'Start again';
   $('btnSkip').disabled = $('btnStop').disabled = !busy();
+  $('btnLock').hidden = !busy();
+  syncLock();
 }
 function renderIdle() {
   if (busy()) return;
@@ -572,6 +626,7 @@ function renderIdle() {
   setMarker(0);
   $('btnStart').textContent = 'Start';
   $('btnSkip').disabled = $('btnStop').disabled = true;
+  $('btnLock').hidden = true;
   renderLevels();
 }
 function showDone(title, e) {
@@ -722,8 +777,75 @@ $('optKg').value = settings.kg;
 $('optKg').addEventListener('input', e => { settings.kg = e.target.value; saveSettings(); renderLog(); });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.status === 'running') { keepAwake(); tick(); }
+  if (document.visibilityState !== 'visible') return;
+  if (state.status === 'running' || locked) keepAwake();
+  tick();
 });
+
+/* Touch lock */
+const lockLayer = $('lockLayer');
+function syncLock() {
+  if (!locked) return;
+  lockLayer.dataset.phase = stage.dataset.phase;
+  $('lkPhase').textContent = $('phaseLabel').textContent;
+  $('lkClock').textContent = $('clock').textContent;
+  $('lkRound').textContent = $('roundLabel').textContent;
+  $('lkNext').textContent = state.status === 'done' ? 'Session logged' : $('nextLabel').textContent;
+}
+function onPop() { if (locked) history.pushState({ lock: 1 }, ''); }
+function lock() {
+  locked = true;
+  lockLayer.hidden = false;
+  document.documentElement.classList.add('locked');
+  keepAwake();
+  try { document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {}); } catch {}
+  // swallow Android's back gesture while locked
+  history.pushState({ lock: 1 }, '');
+  window.addEventListener('popstate', onPop);
+  render(Math.min(elapsed(), plan.total), Math.max(state.idx, 0));
+  $('unlockBtn').focus({ preventScroll: true });
+}
+function unlock() {
+  locked = false;
+  lockLayer.hidden = true;
+  document.documentElement.classList.remove('locked');
+  window.removeEventListener('popstate', onPop);
+  if (history.state && history.state.lock) history.back();
+  try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch {}
+  if (state.status !== 'running') releaseAwake();
+  resetHold();
+}
+$('btnLock').addEventListener('click', lock);
+
+// every touch on the layer is swallowed except a steady hold on the unlock button
+['touchstart', 'touchmove', 'touchend', 'gesturestart', 'dblclick', 'contextmenu'].forEach(type =>
+  lockLayer.addEventListener(type, e => { if (e.cancelable) e.preventDefault(); }, { passive: false }));
+
+const HOLD_MS = 1500, RING = 238.76;
+let holdStart = 0, holdRaf = 0;
+function resetHold() { cancelAnimationFrame(holdRaf); holdStart = 0; $('unlockProg').style.strokeDashoffset = RING; }
+function holdStep(now) {
+  if (!holdStart) return;
+  const p = Math.min(1, (now - holdStart) / HOLD_MS);
+  $('unlockProg').style.strokeDashoffset = RING * (1 - p);
+  if (p >= 1) { buzz(60); unlock(); } else holdRaf = requestAnimationFrame(holdStep);
+}
+const unlockBtn = $('unlockBtn');
+unlockBtn.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  holdStart = performance.now();
+  holdRaf = requestAnimationFrame(holdStep);
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(t => unlockBtn.addEventListener(t, resetHold));
+// touch pointers are implicitly captured, so sliding off never fires pointerleave
+unlockBtn.addEventListener('pointermove', e => {
+  const r = unlockBtn.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) resetHold();
+});
+unlockBtn.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); holdStart = performance.now(); holdRaf = requestAnimationFrame(holdStep); }
+});
+unlockBtn.addEventListener('keyup', resetHold);
 
 renderIdle();
 renderLog();

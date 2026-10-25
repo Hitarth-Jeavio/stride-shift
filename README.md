@@ -21,4 +21,8 @@ Each session has a 5-minute warm-up walk and a 5-minute cool-down walk around th
 
 The beeps keep playing with your screen off: the whole session is rendered into one audio track and played like a podcast, so the lock screen also gets play/pause/skip controls. Voice cues and vibration only work while the screen is on.
 
+During a session, **Lock screen** keeps the display on but ignores touches, so the phone can sit in a pocket or armband. Hold the lock icon for 1.5 seconds to unlock.
+
+Add it to your home screen to use it like an app (it has an icon and opens without the browser bar).
+
 A single static `index.html` with no build step. Session history stays in your browser's localStorage.
