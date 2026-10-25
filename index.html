@@ -255,6 +255,7 @@ img { max-width: 100%; }
   <section class="section">
     <div class="section-head"><h2>Settings</h2></div>
     <ul class="list">
+      <li class="row"><label for="optMusic">Play with music<small>Beeps mix with YouTube Music or Spotify instead of pausing it. Needs the screen on.</small></label><input id="optMusic" class="switch" type="checkbox"></li>
       <li class="row"><label for="optWarm">Warm-up and cool-down<small>5-minute walk at each end</small></label><input id="optWarm" class="switch" type="checkbox"></li>
       <li class="row"><label for="optVoice">Voice cues<small>Says “Run” or “Walk” after each beep, while the screen is on</small></label><input id="optVoice" class="switch" type="checkbox"></li>
       <li class="row"><label for="optVibe">Vibrate<small>Buzzes on each switch while the screen is on (Android only)</small></label><input id="optVibe" class="switch" type="checkbox"></li>
@@ -330,7 +331,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let settings = Object.assign({ level: 1, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('strideshift.settings', {}));
+let settings = Object.assign({ level: 1, music: true, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('strideshift.settings', {}));
 let log = store.get('strideshift.log', []);
 const saveSettings = () => store.set('strideshift.settings', settings);
 
@@ -414,18 +415,59 @@ function loadAudio(blob) {
   audioUrl = URL.createObjectURL(blob);
   audio.src = audioUrl;
 }
-const SOUND_NOTE = $('soundNote').textContent;
 function playAudio() {
   const p = audio.play();
-  if (p) p.catch(() => {
-    // playback blocked: keep timing on the wall clock, silently
-    if (!state.audio || state.status !== 'running') return;
-    state.base = audio.currentTime;
-    state.t0 = Date.now();
-    state.audio = false;
-    $('soundNote').textContent = "Sound couldn't start, so the timer is running without beeps. Tap Pause, then Resume to try again.";
-  });
+  if (p) p.catch(() => { if (state.audio && state.status === 'running') switchToBeeps(); });
 }
+
+/* Music-friendly beeps: short Web Audio sounds mix with other apps' music instead of
+   taking it over, but they need the page in the foreground (screen on). */
+let ctx = null, bus = null;
+function setAudioSession(type) { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} }
+function ensureCtx() {
+  try {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+  } catch {}
+}
+function beep(dest, at, name) {
+  for (const [off, f, dur, vol] of SOUNDS[name]) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, at + off);
+    g.gain.exponentialRampToValueAtTime(vol, at + off + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + off + dur);
+    o.connect(g).connect(dest);
+    o.start(at + off); o.stop(at + off + dur + 0.03);
+  }
+}
+function cancelBeeps() { if (bus) { try { bus.disconnect(); } catch {} bus = null; } }
+function scheduleBeeps(t) {
+  cancelBeeps();
+  if (!ctx) return;
+  bus = ctx.createGain();
+  bus.connect(ctx.destination);
+  const now = ctx.currentTime + 0.05;
+  for (const [ct, name] of cuesFor(plan)) if (ct - t > 0.01) beep(bus, now + ct - t, name);
+}
+function beepNow(name) { if (ctx && bus) beep(bus, ctx.currentTime + 0.03, name); }
+
+// another app took the audio (or playback was blocked): keep counting and switch to mixable beeps
+function switchToBeeps() {
+  state.base = audio.currentTime;
+  state.t0 = Date.now();
+  state.audio = false;
+  state.engine = 'beeps';
+  audio.removeAttribute('src');
+  audio.load();
+  setAudioSession('ambient');
+  ensureCtx();
+  scheduleBeeps(state.base);
+  $('soundNote').textContent = 'Another app took over the audio, so the beeps now play alongside it. Keep the screen on (Lock screen) so they keep coming.';
+}
+const soundNote = () => settings.music
+  ? 'Beeps play alongside your music. Keep the screen on: tap Lock screen and pocket the phone. On iPhone, the silent switch mutes the beeps.'
+  : 'Beeps keep playing with the screen off, but they pause other music. On iPhone, the silent switch mutes them.';
 
 function say(text) {
   if (!settings.voice || !('speechSynthesis' in window)) return;
@@ -440,7 +482,8 @@ function releaseAwake() { if (locked) return; try { wakeLock && wakeLock.release
 
 /* Session engine */
 let plan = buildPlan(currentCfg(), settings.warm);
-const state = { status: 'idle', base: 0, t0: 0, idx: -1, audio: false };
+// engine 'track': one long audio file, works screen-off; 'beeps': Web Audio, mixes with music
+const state = { status: 'idle', base: 0, t0: 0, idx: -1, audio: false, engine: 'track' };
 let loop = null;
 
 const elapsed = () => state.audio ? audio.currentTime
@@ -463,11 +506,15 @@ const kcalOf = (run, walk) => {
 
 function start() {
   plan = buildPlan(currentCfg(), settings.warm);
-  Object.assign(state, { status: 'running', base: 0, t0: Date.now(), idx: -1, audio: true });
-  $('soundNote').textContent = SOUND_NOTE;
+  const music = settings.music;
+  Object.assign(state, { status: 'running', base: 0, t0: Date.now(), idx: -1, audio: !music, engine: music ? 'beeps' : 'track' });
+  $('soundNote').textContent = soundNote();
   buildTimeline();
-  loadAudio(renderWav(plan.total + TAIL, cuesFor(plan)));
-  playAudio();
+  setAudioSession(music ? 'ambient' : 'playback');
+  // unlock Web Audio during this tap so beeps can take over later without one
+  ensureCtx();
+  if (music) scheduleBeeps(0);
+  else { loadAudio(renderWav(plan.total + TAIL, cuesFor(plan))); playAudio(); }
   run();
   $('doneCard').hidden = true;
   renderLevels();
@@ -482,7 +529,8 @@ function pause() {
   if (state.status !== 'running') return;
   state.base = elapsed();
   state.status = 'paused';
-  audio.pause();
+  if (state.audio) audio.pause();
+  cancelBeeps();
   clearInterval(loop);
   releaseAwake();
   try { speechSynthesis.cancel(); } catch {}
@@ -492,9 +540,11 @@ function resume() {
   if (state.status !== 'paused') return;
   state.status = 'running';
   state.t0 = Date.now();
-  state.audio = true;
-  if (Math.abs(audio.currentTime - state.base) > 0.5) audio.currentTime = state.base;
-  playAudio();
+  if (state.engine === 'track') {
+    state.audio = true;
+    if (Math.abs(audio.currentTime - state.base) > 0.5) audio.currentTime = state.base;
+    playAudio();
+  } else { ensureCtx(); scheduleBeeps(state.base); }
   run();
 }
 function skip() {
@@ -503,6 +553,7 @@ function skip() {
   state.base = to;
   state.t0 = Date.now();
   if (state.audio) audio.currentTime = to;
+  else if (state.status === 'running') { scheduleBeeps(to); beepNow(next ? soundFor(next.type) : 'done'); }
   if (!next) return finish();
   if (state.status === 'running') tick();
   else { enter(i + 1, i); render(to, i + 1); }
@@ -510,13 +561,14 @@ function skip() {
 function stopAll() {
   clearInterval(loop);
   audio.pause();
+  cancelBeeps();
   releaseAwake();
   state.audio = false;
   state.status = 'idle';
   state.idx = -1;
 }
 function finish() {
-  // leave the audio playing so the final chime finishes
+  // leave the audio and scheduled beeps alone so the final chime finishes
   clearInterval(loop);
   releaseAwake();
   state.status = 'done';
@@ -577,9 +629,10 @@ if ('mediaSession' in navigator) {
   set('pause', pause);
   set('nexttrack', () => { if (busy()) skip(); });
 }
-// pauses from outside the page (lock screen, headphones, a phone call)
-audio.addEventListener('pause', () => { if (state.audio && !audio.ended) pause(); });
-audio.addEventListener('play', resume);
+// lock-screen and headphone pauses arrive via the media session handlers above;
+// a bare pause event means another app (music, a call) took the audio, so keep counting
+audio.addEventListener('pause', () => { if (state.audio && !audio.ended && state.status === 'running') switchToBeeps(); });
+audio.addEventListener('play', () => { if (state.engine === 'track') resume(); });
 audio.addEventListener('timeupdate', tick);
 audio.addEventListener('ended', tick);
 
@@ -739,6 +792,13 @@ $('btnClear').addEventListener('click', e => armed(e.currentTarget, 'Tap again t
 let testUrl = null;
 const testAudio = new Audio();
 $('btnTest').addEventListener('click', () => {
+  if (settings.music) {
+    setAudioSession('ambient');
+    ensureCtx();
+    if (ctx) { beep(ctx.destination, ctx.currentTime + 0.05, 'run'); beep(ctx.destination, ctx.currentTime + 0.75, 'walk'); }
+    return;
+  }
+  setAudioSession('playback');
   testUrl = testUrl || URL.createObjectURL(renderWav(1.8, [[0, 'run'], [0.7, 'walk']]));
   testAudio.src = testUrl;
   testAudio.play().catch(() => {});
@@ -770,6 +830,7 @@ const bindSwitch = (id, key, after) => {
   el.checked = !!settings[key];
   el.addEventListener('change', () => { settings[key] = el.checked; saveSettings(); after && after(); });
 };
+bindSwitch('optMusic', 'music', () => { if (!busy()) $('soundNote').textContent = soundNote(); });
 bindSwitch('optWarm', 'warm', renderIdle);
 bindSwitch('optVoice', 'voice');
 bindSwitch('optVibe', 'vibe');
@@ -779,6 +840,8 @@ $('optKg').addEventListener('input', e => { settings.kg = e.target.value; saveSe
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (state.status === 'running' || locked) keepAwake();
+  // the audio clock may have stalled while hidden; realign the beeps to the wall clock
+  if (state.status === 'running' && !state.audio) { ensureCtx(); scheduleBeeps(elapsed()); }
   tick();
 });
 
@@ -847,6 +910,7 @@ unlockBtn.addEventListener('keydown', e => {
 });
 unlockBtn.addEventListener('keyup', resetHold);
 
+$('soundNote').textContent = soundNote();
 renderIdle();
 renderLog();
 </script>

@@ -19,7 +19,11 @@ Each session has a 5-minute warm-up walk and a 5-minute cool-down walk around th
 | L7 | 8:00 / 1:00 | 4 | 32 min | 45 min |
 | L8 | 10:00 / 1:00 | 3 | 30 min | 42 min |
 
-The beeps keep playing with your screen off: the whole session is rendered into one audio track and played like a podcast, so the lock screen also gets play/pause/skip controls. Voice cues and vibration only work while the screen is on.
+**Sound modes** (Settings → Play with music):
+- **On (default):** beeps play as short sound effects that mix with YouTube Music, Spotify and so on. They need the screen on, so use Lock screen.
+- **Off:** the whole session plays as one audio track, so beeps keep going with the screen off, but the track pauses other music. If another app takes over the audio mid-session, the timer keeps counting and switches to the mixing beeps.
+
+Voice cues and vibration only work while the screen is on.
 
 During a session, **Lock screen** keeps the display on but ignores touches, so the phone can sit in a pocket or armband. Hold the lock icon for 1.5 seconds to unlock.
 
