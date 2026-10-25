@@ -1,8 +1,8 @@
-# Run-Walk Ladder
+# Stride Shift
 
 A run-walk interval timer for weight loss. Pick a level, press Start, and it beeps (plus a voice cue) every time you should switch between running and walking.
 
-**Live:** https://hitarth-jeavio.github.io/run-walk-ladder/
+**Live:** https://hitarth-jeavio.github.io/stride-shift/
 
 ## Levels
 

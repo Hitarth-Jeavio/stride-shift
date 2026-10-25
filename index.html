@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Run-walk interval timer for weight loss with level progression, beeps and voice cues, and a weekly log.">
 <meta name="theme-color" content="#c93a22">
-<title>Run-Walk Ladder</title>
+<title>Stride Shift</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -162,7 +162,7 @@ img { max-width: 100%; }
 
 <main class="wrap">
   <header>
-    <h1>Run-Walk Ladder</h1>
+    <h1>Stride Shift</h1>
     <p class="sub">A run-walk interval timer for losing weight. Pick your level, press start, and switch when it beeps.</p>
   </header>
 
@@ -279,9 +279,9 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-let settings = Object.assign({ level: 1, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('rwl.settings', {}));
-let log = store.get('rwl.log', []);
-const saveSettings = () => store.set('rwl.settings', settings);
+let settings = Object.assign({ level: 1, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('strideshift.settings', {}));
+let log = store.get('strideshift.log', []);
+const saveSettings = () => store.set('strideshift.settings', settings);
 
 const pad = n => String(n).padStart(2, '0');
 const fmt = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
@@ -606,7 +606,7 @@ function record(complete, t) {
   const e = { ts: Date.now(), level: plan.cfg.id, label: cfgLabel(plan.cfg), run: Math.round(sp.run), walk: Math.round(sp.walk), complete };
   log.unshift(e);
   log = log.slice(0, 300);
-  store.set('rwl.log', log);
+  store.set('strideshift.log', log);
   renderLog();
   return e;
 }
@@ -629,7 +629,7 @@ $('btnStart').addEventListener('click', () => {
 $('btnSkip').addEventListener('click', skip);
 $('btnStop').addEventListener('click', e => armed(e.currentTarget, 'Sure?', endEarly));
 $('btnClear').addEventListener('click', e => armed(e.currentTarget, 'Tap again to delete all', () => {
-  log = []; store.set('rwl.log', log); renderLog(); renderLevels();
+  log = []; store.set('strideshift.log', log); renderLog(); renderLevels();
 }));
 $('btnTest').addEventListener('click', () => {
   ensureAudio();
