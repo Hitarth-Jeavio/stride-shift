@@ -184,7 +184,7 @@ img { max-width: 100%; }
       <button id="btnSkip" class="btn ghost" type="button" disabled>Skip</button>
       <button id="btnStop" class="btn ghost" type="button" disabled>End</button>
     </div>
-    <p class="fine">Keep this page open and your phone off silent. On iPhone, the ring/silent switch mutes the beeps.</p>
+    <p id="soundNote" class="fine">Beeps keep playing with the screen off. Keep your phone off silent; on iPhone the ring/silent switch mutes them.</p>
   </section>
 
   <div id="doneCard" class="done" hidden>
@@ -205,8 +205,8 @@ img { max-width: 100%; }
     <div class="section-head"><h2>Settings</h2></div>
     <ul class="list">
       <li class="row"><label for="optWarm">Warm-up and cool-down<small>5-minute walk at each end</small></label><input id="optWarm" class="switch" type="checkbox"></li>
-      <li class="row"><label for="optVoice">Voice cues<small>Says “Run” or “Walk” after each beep</small></label><input id="optVoice" class="switch" type="checkbox"></li>
-      <li class="row"><label for="optVibe">Vibrate<small>Buzzes on each switch, on phones that support it</small></label><input id="optVibe" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optVoice">Voice cues<small>Says “Run” or “Walk” after each beep, while the screen is on</small></label><input id="optVoice" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optVibe">Vibrate<small>Buzzes on each switch while the screen is on (Android only)</small></label><input id="optVibe" class="switch" type="checkbox"></li>
       <li class="row"><label for="optKg">Your weight (kg)<small>Only used to estimate calories</small></label><input id="optKg" type="number" inputmode="decimal" min="30" max="250" step="0.5" placeholder="e.g. 82"></li>
       <li class="row"><label for="btnTest">Sound check<small>Plays the run beep, then the walk beep</small></label><button id="btnTest" class="small-btn" type="button">Test</button></li>
     </ul>
@@ -313,47 +313,68 @@ function buildPlan(cfg, warm) {
   return { segs, total: t, cfg };
 }
 
-/* Beeps are scheduled ahead on the AudioContext clock, so they stay on time even when page timers get throttled */
-let ctx = null, master = null;
-function ensureAudio() {
-  try {
-    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === 'suspended') ctx.resume();
-  } catch {}
-}
-function tone(dest, at, freq, dur, vol, type = 'triangle') {
-  const o = ctx.createOscillator(), g = ctx.createGain();
-  o.type = type; o.frequency.value = freq;
-  g.gain.setValueAtTime(0.0001, at);
-  g.gain.exponentialRampToValueAtTime(vol, at + 0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-  o.connect(g).connect(dest);
-  o.start(at); o.stop(at + dur + 0.03);
-}
+/* The whole session is rendered into one WAV and played through an <audio> element.
+   Media playback keeps going with the screen off, and its position is the session clock. */
+const SR = 8000;
+const TAIL = 1.5; // room for the final chime after the last segment
+const MAX_SESSION = 7200;
+// [offset s, freq Hz, duration s, volume 0-1]
 const SOUNDS = {
-  tick: (d, at) => tone(d, at, 1046, 0.09, 0.35, 'sine'),
-  run:  (d, at) => [659, 880, 1319].forEach((f, k) => tone(d, at + k * 0.15, f, 0.16, 0.6)),
-  walk: (d, at) => { tone(d, at, 784, 0.32, 0.6); tone(d, at + 0.34, 523, 0.5, 0.6); },
-  done: (d, at) => [523, 659, 784, 1046].forEach((f, k) => tone(d, at + k * 0.14, f, k === 3 ? 0.6 : 0.16, 0.55)),
+  tick: [[0, 1046, 0.09, 0.5]],
+  run:  [[0, 659, 0.16, 0.9], [0.15, 880, 0.16, 0.9], [0.3, 1319, 0.18, 0.9]],
+  walk: [[0, 784, 0.32, 0.9], [0.34, 523, 0.5, 0.9]],
+  done: [[0, 523, 0.16, 0.9], [0.14, 659, 0.16, 0.9], [0.28, 784, 0.16, 0.9], [0.42, 1046, 0.6, 0.9]],
 };
 const soundFor = type => type === 'run' ? 'run' : 'walk';
 
-function cancelScheduled() { if (master) { try { master.disconnect(); } catch {} master = null; } }
-function scheduleFrom(t) {
-  cancelScheduled();
-  if (!ctx) return;
-  master = ctx.createGain();
-  master.connect(ctx.destination);
-  const now = ctx.currentTime + 0.03;
-  const at = (dt, name) => {
-    for (let k = 3; k >= 1; k--) if (dt - k > 0.05) SOUNDS.tick(master, now + dt - k);
-    SOUNDS[name](master, now + dt);
-  };
-  plan.segs.forEach((s, i) => { const dt = s.start - t; if (i > 0 && dt > 0.01) at(dt, soundFor(s.type)); });
-  const end = plan.total - t;
-  if (end > 0.01) at(end, 'done');
+function cuesFor(plan) {
+  const cues = [];
+  const at = (t, name) => { for (let k = 3; k >= 1; k--) if (t - k > 0) cues.push([t - k, 'tick']); cues.push([t, name]); };
+  plan.segs.forEach((s, i) => { if (i > 0) at(s.start, soundFor(s.type)); });
+  at(plan.total, 'done');
+  return cues;
 }
-function playNow(name) { if (ctx && master) SOUNDS[name](master, ctx.currentTime + 0.03); }
+// 8 kHz, 8-bit mono keeps a 45-minute session around 22 MB
+function renderWav(seconds, cues) {
+  const n = Math.ceil(seconds * SR), buf = new Uint8Array(44 + n), v = new DataView(buf.buffer);
+  const str = (o, s) => [...s].forEach((c, i) => { buf[o + i] = c.charCodeAt(0); });
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, SR, true); v.setUint32(28, SR, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  str(36, 'data'); v.setUint32(40, n, true);
+  buf.fill(128, 44);
+  const atk = Math.round(0.01 * SR);
+  for (const [t, name] of cues) for (const [off, f, dur, vol] of SOUNDS[name]) {
+    const s0 = Math.round((t + off) * SR), len = Math.round(dur * SR);
+    for (let i = 0; i < len && s0 + i < n; i++) {
+      const env = i < atk ? i / atk : Math.exp(-4 * (i - atk) / len);
+      const p = 44 + s0 + i;
+      buf[p] = Math.max(0, Math.min(255, buf[p] + Math.round(Math.sin(2 * Math.PI * f * i / SR) * vol * env * 127)));
+    }
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+const audio = new Audio();
+audio.preload = 'auto';
+let audioUrl = null;
+function loadAudio(blob) {
+  if (audioUrl) URL.revokeObjectURL(audioUrl);
+  audioUrl = URL.createObjectURL(blob);
+  audio.src = audioUrl;
+}
+const SOUND_NOTE = $('soundNote').textContent;
+function playAudio() {
+  const p = audio.play();
+  if (p) p.catch(() => {
+    // playback blocked: keep timing on the wall clock, silently
+    if (!state.audio || state.status !== 'running') return;
+    state.base = audio.currentTime;
+    state.t0 = Date.now();
+    state.audio = false;
+    $('soundNote').textContent = "Sound couldn't start, so the timer is running without beeps. Tap Pause, then Resume to try again.";
+  });
+}
 
 function say(text) {
   if (!settings.voice || !('speechSynthesis' in window)) return;
@@ -367,10 +388,11 @@ function releaseAwake() { try { wakeLock && wakeLock.release(); } catch {} wakeL
 
 /* Session engine */
 let plan = buildPlan(currentCfg(), settings.warm);
-const state = { status: 'idle', base: 0, t0: 0, idx: -1 };
+const state = { status: 'idle', base: 0, t0: 0, idx: -1, audio: false };
 let loop = null;
 
-const elapsed = () => state.status === 'running' ? state.base + (performance.now() - state.t0) / 1000 : state.base;
+const elapsed = () => state.audio ? audio.currentTime
+  : state.status === 'running' ? state.base + (Date.now() - state.t0) / 1000 : state.base;
 const segAt = t => { for (let i = plan.segs.length - 1; i >= 0; i--) if (t >= plan.segs[i].start) return i; return 0; };
 const busy = () => state.status === 'running' || state.status === 'paused';
 
@@ -388,11 +410,12 @@ const kcalOf = (run, walk) => {
 };
 
 function start() {
-  ensureAudio();
   plan = buildPlan(currentCfg(), settings.warm);
-  Object.assign(state, { status: 'running', base: 0, t0: performance.now(), idx: -1 });
+  Object.assign(state, { status: 'running', base: 0, t0: Date.now(), idx: -1, audio: true });
+  $('soundNote').textContent = SOUND_NOTE;
   buildTimeline();
-  scheduleFrom(0);
+  loadAudio(renderWav(plan.total + TAIL, cuesFor(plan)));
+  playAudio();
   run();
   $('doneCard').hidden = true;
   renderLevels();
@@ -404,41 +427,49 @@ function run() {
   tick();
 }
 function pause() {
+  if (state.status !== 'running') return;
   state.base = elapsed();
   state.status = 'paused';
+  audio.pause();
   clearInterval(loop);
-  cancelScheduled();
   releaseAwake();
   try { speechSynthesis.cancel(); } catch {}
   render(state.base, state.idx);
 }
 function resume() {
-  ensureAudio();
+  if (state.status !== 'paused') return;
   state.status = 'running';
-  state.t0 = performance.now();
-  scheduleFrom(state.base);
+  state.t0 = Date.now();
+  state.audio = true;
+  if (Math.abs(audio.currentTime - state.base) > 0.5) audio.currentTime = state.base;
+  playAudio();
   run();
 }
 function skip() {
   const i = segAt(elapsed()), next = plan.segs[i + 1];
-  if (!next) return finish(true);
-  state.base = next.start;
-  state.t0 = performance.now();
-  if (state.status === 'running') { scheduleFrom(next.start); playNow(soundFor(next.type)); tick(); }
-  else { enter(i + 1, i); render(state.base, i + 1); }
+  const to = next ? next.start : plan.total;
+  state.base = to;
+  state.t0 = Date.now();
+  if (state.audio) audio.currentTime = to;
+  if (!next) return finish();
+  if (state.status === 'running') tick();
+  else { enter(i + 1, i); render(to, i + 1); }
 }
 function stopAll() {
   clearInterval(loop);
-  cancelScheduled();
+  audio.pause();
   releaseAwake();
+  state.audio = false;
   state.status = 'idle';
   state.idx = -1;
 }
-function finish(manual) {
-  if (manual) { ensureAudio(); if (ctx) SOUNDS.done(ctx.destination, ctx.currentTime + 0.03); }
-  stopAll();
+function finish() {
+  // leave the audio playing so the final chime finishes
+  clearInterval(loop);
+  releaseAwake();
   state.status = 'done';
   state.base = plan.total;
+  state.audio = false;
   const e = record(true, plan.total);
   say('Session complete. Nice work.');
   buzz([200, 100, 200, 100, 600]);
@@ -447,7 +478,7 @@ function finish(manual) {
   renderLevels();
 }
 function endEarly() {
-  const t = elapsed();
+  const t = Math.min(elapsed(), plan.total);
   stopAll();
   try { speechSynthesis.cancel(); } catch {}
   if (t >= 60) showDone('Ended early', record(false, t));
@@ -458,7 +489,7 @@ function endEarly() {
 function tick() {
   if (state.status !== 'running') return;
   const t = elapsed();
-  if (t >= plan.total) return finish(false);
+  if (t >= plan.total) return finish();
   const i = segAt(t);
   if (i !== state.idx) enter(i, state.idx);
   render(t, i);
@@ -467,6 +498,7 @@ function enter(i, prev) {
   state.idx = i;
   const s = plan.segs[i];
   [...$('timeline').children].forEach((el, k) => el.classList.toggle('past', k < i));
+  updateLockScreen(s);
   if (prev === -1) {
     say(s.type === 'warm' ? 'Warm up. Brisk walk for five minutes.' : 'Get ready.');
     return;
@@ -480,6 +512,24 @@ function enter(i, prev) {
   setTimeout(() => say(words), 650);
   buzz(s.type === 'run' ? [250, 100, 250, 100, 250] : [700]);
 }
+
+// lock-screen / notification controls
+function updateLockScreen(s) {
+  if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+  const title = s.round ? `${PHASE[s.type].name} · Round ${s.round} of ${plan.cfg.rounds}` : PHASE[s.type].name;
+  try { navigator.mediaSession.metadata = new MediaMetadata({ title, artist: 'Stride Shift', album: cfgName(plan.cfg) }); } catch {}
+}
+if ('mediaSession' in navigator) {
+  const set = (a, fn) => { try { navigator.mediaSession.setActionHandler(a, fn); } catch {} };
+  set('play', resume);
+  set('pause', pause);
+  set('nexttrack', () => { if (busy()) skip(); });
+}
+// pauses from outside the page (lock screen, headphones, a phone call)
+audio.addEventListener('pause', () => { if (state.audio && !audio.ended) pause(); });
+audio.addEventListener('play', resume);
+audio.addEventListener('timeupdate', tick);
+audio.addEventListener('ended', tick);
 
 /* Rendering */
 const stage = $('stage');
@@ -631,11 +681,12 @@ $('btnStop').addEventListener('click', e => armed(e.currentTarget, 'Sure?', endE
 $('btnClear').addEventListener('click', e => armed(e.currentTarget, 'Tap again to delete all', () => {
   log = []; store.set('strideshift.log', log); renderLog(); renderLevels();
 }));
+let testUrl = null;
+const testAudio = new Audio();
 $('btnTest').addEventListener('click', () => {
-  ensureAudio();
-  if (!ctx) return;
-  SOUNDS.run(ctx.destination, ctx.currentTime + 0.05);
-  SOUNDS.walk(ctx.destination, ctx.currentTime + 1.0);
+  testUrl = testUrl || URL.createObjectURL(renderWav(1.8, [[0, 'run'], [0.7, 'walk']]));
+  testAudio.src = testUrl;
+  testAudio.play().catch(() => {});
 });
 
 $('levels').addEventListener('click', e => {
@@ -653,6 +704,8 @@ $('levels').addEventListener('change', e => {
   if (!key || !(v > 0)) return;
   if (key === 'rounds') v = Math.min(40, Math.round(v));
   settings.custom[key] = v;
+  const c = currentCfg(), maxRounds = Math.max(1, Math.floor((MAX_SESSION - 600) / (c.run + c.walk)));
+  settings.custom.rounds = Math.min(settings.custom.rounds, maxRounds);
   saveSettings();
   renderIdle();
 });

@@ -19,4 +19,6 @@ Each session has a 5-minute warm-up walk and a 5-minute cool-down walk around th
 | L7 | 8:00 / 1:00 | 4 | 32 min | 45 min |
 | L8 | 10:00 / 1:00 | 3 | 30 min | 42 min |
 
+The beeps keep playing with your screen off: the whole session is rendered into one audio track and played like a podcast, so the lock screen also gets play/pause/skip controls. Voice cues and vibration only work while the screen is on.
+
 A single static `index.html` with no build step. Session history stays in your browser's localStorage.
