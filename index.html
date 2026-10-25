@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Run-walk interval timer for weight loss with level progression, beeps and voice cues, and a weekly log.">
+<meta name="theme-color" content="#c93a22">
+<title>Run-Walk Ladder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: single phone-width column; the timer panel floods with the phase colour (tartan red = run, teal = walk) so it reads from arm's length. */
+:root {
+  --bg: #eceff1; --surface: #fbfcfc; --ink: #14181d; --muted: #5a636d; --line: #d3d9de; --track: #dde2e6;
+  --run: #c93a22; --walk: #13788a; --easy: #4f5d73; --easy-soft: #a9b4c2; --on-phase: #ffffff;
+  --sel: #f3e7e3; --link: #0f6b7b; --focus: #13788a;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1114; --surface: #161a1f; --ink: #e7eaed; --muted: #97a1ab; --line: #272d34; --track: #232930;
+  --run: #d84a31; --walk: #1a8799; --easy: #46546a; --easy-soft: #4e5b6d; --on-phase: #ffffff;
+  --sel: #2a1d1a; --link: #5cc3d4; --focus: #5cc3d4; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0e1114; --surface: #161a1f; --ink: #e7eaed; --muted: #97a1ab; --line: #272d34; --track: #232930;
+  --run: #d84a31; --walk: #1a8799; --easy: #46546a; --easy-soft: #4e5b6d; --on-phase: #ffffff;
+  --sel: #2a1d1a; --link: #5cc3d4; --focus: #5cc3d4; color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 56px; display: flex; flex-direction: column; gap: 28px; }
+h1, h2, h3 { font-family: var(--f-display); margin: 0; text-wrap: balance; line-height: 1.1; }
+h1 { font-size: 2rem; font-weight: 700; letter-spacing: .01em; text-transform: uppercase; }
+h2 { font-size: 1.35rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+a { color: var(--link); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Timer stage */
+.stage {
+  --phase-c: var(--run); --btn-bg: var(--run); --btn-fg: var(--on-phase);
+  --seg-run: var(--run); --seg-walk: var(--walk); --seg-easy: var(--easy-soft);
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 20px; padding: 18px 18px 20px; display: flex; flex-direction: column; gap: 12px;
+  transition: background-color .45s ease, color .45s ease;
+}
+.stage.live { color: var(--on-phase); border-color: transparent; --btn-bg: var(--on-phase); --btn-fg: var(--phase-c);
+  --seg-run: rgba(255,255,255,.95); --seg-walk: rgba(255,255,255,.5); --seg-easy: rgba(255,255,255,.22); }
+.stage.live :focus-visible { outline-color: var(--on-phase); }
+.stage[data-phase="run"] { --phase-c: var(--run); background: var(--run); }
+.stage[data-phase="walk"] { --phase-c: var(--walk); background: var(--walk); }
+.stage[data-phase="warm"], .stage[data-phase="cool"], .stage[data-phase="ready"] { --phase-c: var(--easy); background: var(--easy); }
+.stage-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.phase { font-family: var(--f-display); font-weight: 700; font-size: 1.9rem; text-transform: uppercase; letter-spacing: .06em; line-height: 1; }
+.round { font-family: var(--f-display); font-weight: 600; font-size: 1.15rem; letter-spacing: .04em; opacity: .85; font-variant-numeric: tabular-nums; }
+.clock { font-family: var(--f-display); font-weight: 700; font-size: clamp(6rem, 33vw, 10rem); line-height: .85; letter-spacing: -.01em; font-variant-numeric: tabular-nums; margin-block: 4px; }
+.stage[data-phase="done"] .clock { color: var(--walk); }
+.tip { margin: 0; font-size: 1.05rem; font-weight: 500; min-height: 1.5em; }
+.next { margin: 0; font-family: var(--f-display); font-size: 1.1rem; letter-spacing: .04em; text-transform: uppercase; opacity: .8; min-height: 1.4em; }
+.stage.paused .clock { animation: blink 1.2s steps(2, start) infinite; }
+@keyframes blink { to { opacity: .35; } }
+
+.tl { position: relative; padding-top: 10px; }
+.timeline { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; background: var(--track); }
+.stage.live .timeline { background: rgba(0,0,0,.18); }
+.seg { flex: var(--d) 1 0; min-width: 2px; }
+.seg.run { background: var(--seg-run); }
+.seg.walk { background: var(--seg-walk); }
+.seg.warm, .seg.cool, .seg.ready { background: var(--seg-easy); }
+.seg.past { opacity: .35; }
+.marker { position: absolute; top: 0; left: 0; width: 0; height: 0; border-inline: 6px solid transparent; border-top: 8px solid currentColor; transform: translateX(-6px); }
+.stage-meta { display: flex; justify-content: space-between; font-size: .9rem; opacity: .85; font-variant-numeric: tabular-nums; }
+.stage-meta b { font-weight: 600; }
+
+.controls { display: flex; gap: 10px; margin-top: 4px; }
+.btn { font-family: var(--f-display); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: 1.2rem;
+  min-height: 56px; padding: 0 16px; border-radius: 14px; border: 2px solid currentColor; background: transparent; }
+.btn.primary { flex: 1; background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); font-size: 1.45rem; }
+.btn.ghost { flex: 0 0 auto; min-width: 84px; }
+.btn:disabled { opacity: .35; cursor: default; }
+.btn.armed { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
+.fine { margin: 0; font-size: .82rem; opacity: .8; }
+
+.done { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.done h3 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: .04em; }
+.done p { margin: 0; color: var(--muted); }
+
+/* Sections */
+.section { display: flex; flex-direction: column; gap: 12px; }
+.section-head { display: flex; flex-direction: column; gap: 2px; }
+.hint { color: var(--muted); font-size: .9rem; margin: 0; }
+.nudge { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--sel); font-size: .92rem; }
+
+.list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.list > li + li { border-top: 1px solid var(--line); }
+.level { display: grid; grid-template-columns: 2.8rem 1fr auto; align-items: center; gap: 12px; width: 100%; padding: 11px 14px; background: none; border: 0; text-align: left; }
+.level:disabled { cursor: default; opacity: .55; }
+.level[aria-pressed="true"] { background: var(--sel); opacity: 1; }
+.lv { font-family: var(--f-display); font-weight: 700; font-size: 1.55rem; line-height: 1; color: var(--muted); }
+.level[aria-pressed="true"] .lv { color: var(--run); }
+.desc { min-width: 0; display: flex; flex-direction: column; }
+.desc b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.desc small { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+.dots { display: flex; gap: 4px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.dot.on { background: var(--walk); border-color: var(--walk); }
+
+.custom { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px 14px 14px; border-top: 1px solid var(--line); }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field span { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+input[type="number"] { font: inherit; font-variant-numeric: tabular-nums; width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
+.row label { flex: 1; min-width: 0; }
+.row small { display: block; color: var(--muted); font-size: .85rem; }
+.switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 46px; height: 28px; border-radius: 14px; background: var(--track); position: relative; cursor: pointer; transition: background .2s; margin: 0; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .2s; }
+.switch:checked { background: var(--walk); }
+.switch:checked::after { transform: translateX(18px); }
+.row input[type="number"] { width: 6.5rem; flex: 0 0 auto; }
+.small-btn { font-family: var(--f-display); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 8px 14px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--bg); flex: 0 0 auto; }
+.small-btn.armed { border-color: var(--run); color: var(--run); }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.stat { display: flex; flex-direction: column; min-width: 0; }
+.stat span { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.stat b { font-family: var(--f-display); font-weight: 700; font-size: 2rem; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.meter { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--walk); border-radius: 4px; }
+.log-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 14px; font-variant-numeric: tabular-nums; }
+.log-row .when { font-weight: 600; }
+.log-row .what { color: var(--muted); font-size: .88rem; grid-column: 1; }
+.log-row .num { grid-row: 1 / span 2; grid-column: 2; text-align: right; align-self: center; font-size: .9rem; }
+.log-row .num b { font-family: var(--f-display); font-size: 1.25rem; }
+.tag { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.empty { padding: 16px 14px; color: var(--muted); }
+
+.notes ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 8px; max-width: 65ch; }
+.notes li::marker { color: var(--run); }
+.sources { font-size: .85rem; color: var(--muted); margin: 0; }
+
+@media (max-width: 420px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .custom { grid-template-columns: 1fr 1fr; }
+  .btn.ghost { min-width: 72px; padding: 0 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage, .switch, .switch::after { transition: none; }
+  .stage.paused .clock { animation: none; opacity: .6; }
+}
+*, *::before, *::after { box-sizing: border-box; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<main class="wrap">
+  <header>
+    <h1>Run-Walk Ladder</h1>
+    <p class="sub">A run-walk interval timer for losing weight. Pick your level, press start, and switch when it beeps.</p>
+  </header>
+
+  <section id="stage" class="stage" data-phase="idle" aria-live="polite">
+    <div class="stage-top">
+      <span id="phaseLabel" class="phase">Level 1</span>
+      <span id="roundLabel" class="round"></span>
+    </div>
+    <div id="clock" class="clock">40:00</div>
+    <p id="tip" class="tip"></p>
+    <p id="nextLabel" class="next"></p>
+    <div class="tl" aria-hidden="true">
+      <div id="marker" class="marker"></div>
+      <div id="timeline" class="timeline"></div>
+    </div>
+    <div class="stage-meta"><span>Elapsed <b id="elapsed">0:00</b></span><span>Left <b id="remaining">0:00</b></span></div>
+    <div class="controls">
+      <button id="btnStart" class="btn primary" type="button">Start</button>
+      <button id="btnSkip" class="btn ghost" type="button" disabled>Skip</button>
+      <button id="btnStop" class="btn ghost" type="button" disabled>End</button>
+    </div>
+    <p class="fine">Keep this page open and your phone off silent. On iPhone, the ring/silent switch mutes the beeps.</p>
+  </section>
+
+  <div id="doneCard" class="done" hidden>
+    <h3 id="doneTitle">Session complete</h3>
+    <p id="doneText"></p>
+  </div>
+
+  <section class="section" id="levelSection">
+    <div class="section-head">
+      <h2>Your level</h2>
+      <p class="hint">Start at L1. Move up a level after 3 sessions that felt comfortable.</p>
+    </div>
+    <p id="nudge" class="nudge" hidden></p>
+    <ol id="levels" class="list"></ol>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>Settings</h2></div>
+    <ul class="list">
+      <li class="row"><label for="optWarm">Warm-up and cool-down<small>5-minute walk at each end</small></label><input id="optWarm" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optVoice">Voice cues<small>Says “Run” or “Walk” after each beep</small></label><input id="optVoice" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optVibe">Vibrate<small>Buzzes on each switch, on phones that support it</small></label><input id="optVibe" class="switch" type="checkbox"></li>
+      <li class="row"><label for="optKg">Your weight (kg)<small>Only used to estimate calories</small></label><input id="optKg" type="number" inputmode="decimal" min="30" max="250" step="0.5" placeholder="e.g. 82"></li>
+      <li class="row"><label for="btnTest">Sound check<small>Plays the run beep, then the walk beep</small></label><button id="btnTest" class="small-btn" type="button">Test</button></li>
+    </ul>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>This week</h2>
+      <p class="hint" id="weekRange"></p>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>Sessions</span><b id="stSessions">0</b></div>
+      <div class="stat"><span>Active min</span><b id="stMin">0</b></div>
+      <div class="stat"><span>Run min</span><b id="stRun">0</b></div>
+      <div class="stat"><span>≈ kcal</span><b id="stKcal">–</b></div>
+    </div>
+    <div class="meter" aria-hidden="true"><i id="meterFill" style="width:0%"></i></div>
+    <p class="hint" id="meterText"></p>
+    <ul id="logList" class="list"></ul>
+    <div><button id="btnClear" class="small-btn" type="button">Clear history</button></div>
+  </section>
+
+  <section class="section notes">
+    <div class="section-head"><h2>Why this plan</h2></div>
+    <ul>
+      <li><b>Intervals, not non-stop running.</b> Walk breaks let a beginner keep moving for 40 minutes instead of stopping after 10. For fat loss, total time moving matters more than speed.</li>
+      <li><b>Both work for fat loss.</b> A 2019 meta-analysis found interval and continuous training each cut body fat by about 1.5 percentage points. Intervals did slightly better for total fat mass.</li>
+      <li><b>Run easy.</b> You should be able to say a full sentence while running. If you can't, slow down. Walk briskly, not at a stroll.</li>
+      <li><b>Aim for 4 sessions a week.</b> That's about 160 minutes, past the 150-minute weekly minimum. Weight loss usually needs 200–300 minutes a week, and food still matters most.</li>
+      <li><b>Climb slowly.</b> Each level lengthens the runs and shortens the walks until you are running 10 minutes at a time. If a level felt hard, repeat it. Rest at least one day between sessions to protect your shins.</li>
+    </ul>
+    <p class="sources">Sources: <a href="https://pubmed.ncbi.nlm.nih.gov/30765340/" target="_blank" rel="noopener">Viana et al., BJSM 2019</a> · <a href="https://www.runnersblueprint.com/beginner-runner-tips-the-complete-guide-to-the-walkrun-method/" target="_blank" rel="noopener">Run-walk ratios for beginners</a></p>
+  </section>
+</main>
+<script>
+const LEVELS = [
+  { id: 1, run: 60,  walk: 120, rounds: 10 },
+  { id: 2, run: 90,  walk: 120, rounds: 9 },
+  { id: 3, run: 120, walk: 120, rounds: 8 },
+  { id: 4, run: 180, walk: 90,  rounds: 7 },
+  { id: 5, run: 240, walk: 90,  rounds: 6 },
+  { id: 6, run: 300, walk: 60,  rounds: 5 },
+  { id: 7, run: 480, walk: 60,  rounds: 4 },
+  { id: 8, run: 600, walk: 60,  rounds: 3 },
+];
+// Compendium of Physical Activities: easy jog ~8.3 MET, brisk walk ~3.5 MET
+const MET_RUN = 8.3, MET_WALK = 3.5;
+const WEEK_GOAL = 150;
+const PHASE = {
+  ready: { name: 'Get ready', tip: 'Your first run starts in a few seconds.' },
+  warm:  { name: 'Warm-up', tip: 'Walk briskly and loosen up your legs.' },
+  run:   { name: 'Run', tip: 'Jog easy. You should still be able to talk.' },
+  walk:  { name: 'Walk', tip: 'Walk briskly and keep your arms swinging.' },
+  cool:  { name: 'Cool-down', tip: 'Walk slowly and let your breathing settle.' },
+};
+
+const $ = id => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === false || v == null) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style') el.style.cssText = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  el.append(...kids.flat().filter(x => x != null && x !== false));
+  return el;
+}
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let settings = Object.assign({ level: 1, warm: true, voice: true, vibe: true, kg: '', custom: { run: 2, walk: 1, rounds: 8 } }, store.get('rwl.settings', {}));
+let log = store.get('rwl.log', []);
+const saveSettings = () => store.set('rwl.settings', settings);
+
+const pad = n => String(n).padStart(2, '0');
+const fmt = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${pad(s % 60)}`; };
+const fmtClock = s => { s = Math.max(0, Math.ceil(s - 1e-6)); return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; };
+const fmtMin = s => { const m = s / 60; return Number.isInteger(m) ? String(m) : m.toFixed(1); };
+
+function currentCfg() {
+  if (settings.level === 'custom') {
+    const c = settings.custom;
+    return { id: 'custom', run: Math.round(c.run * 60), walk: Math.round(c.walk * 60), rounds: c.rounds };
+  }
+  return LEVELS.find(l => l.id === settings.level) || LEVELS[0];
+}
+const cfgName = cfg => cfg.id === 'custom' ? 'Custom' : `Level ${cfg.id}`;
+const cfgLabel = cfg => `${fmt(cfg.run)} run · ${fmt(cfg.walk)} walk × ${cfg.rounds}`;
+
+function buildPlan(cfg, warm) {
+  const segs = [];
+  const add = (type, dur, round) => { if (dur > 0) segs.push({ type, dur, round }); };
+  add(warm ? 'warm' : 'ready', warm ? 300 : 5);
+  for (let r = 1; r <= cfg.rounds; r++) {
+    add('run', cfg.run, r);
+    // the cool-down replaces the final walk
+    if (r < cfg.rounds || !warm) add('walk', cfg.walk, r);
+  }
+  if (warm) add('cool', 300);
+  let t = 0;
+  segs.forEach(s => { s.start = t; t += s.dur; });
+  return { segs, total: t, cfg };
+}
+
+/* Beeps are scheduled ahead on the AudioContext clock, so they stay on time even when page timers get throttled */
+let ctx = null, master = null;
+function ensureAudio() {
+  try {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+  } catch {}
+}
+function tone(dest, at, freq, dur, vol, type = 'triangle') {
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(vol, at + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g).connect(dest);
+  o.start(at); o.stop(at + dur + 0.03);
+}
+const SOUNDS = {
+  tick: (d, at) => tone(d, at, 1046, 0.09, 0.35, 'sine'),
+  run:  (d, at) => [659, 880, 1319].forEach((f, k) => tone(d, at + k * 0.15, f, 0.16, 0.6)),
+  walk: (d, at) => { tone(d, at, 784, 0.32, 0.6); tone(d, at + 0.34, 523, 0.5, 0.6); },
+  done: (d, at) => [523, 659, 784, 1046].forEach((f, k) => tone(d, at + k * 0.14, f, k === 3 ? 0.6 : 0.16, 0.55)),
+};
+const soundFor = type => type === 'run' ? 'run' : 'walk';
+
+function cancelScheduled() { if (master) { try { master.disconnect(); } catch {} master = null; } }
+function scheduleFrom(t) {
+  cancelScheduled();
+  if (!ctx) return;
+  master = ctx.createGain();
+  master.connect(ctx.destination);
+  const now = ctx.currentTime + 0.03;
+  const at = (dt, name) => {
+    for (let k = 3; k >= 1; k--) if (dt - k > 0.05) SOUNDS.tick(master, now + dt - k);
+    SOUNDS[name](master, now + dt);
+  };
+  plan.segs.forEach((s, i) => { const dt = s.start - t; if (i > 0 && dt > 0.01) at(dt, soundFor(s.type)); });
+  const end = plan.total - t;
+  if (end > 0.01) at(end, 'done');
+}
+function playNow(name) { if (ctx && master) SOUNDS[name](master, ctx.currentTime + 0.03); }
+
+function say(text) {
+  if (!settings.voice || !('speechSynthesis' in window)) return;
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; speechSynthesis.speak(u); } catch {}
+}
+function buzz(pattern) { if (settings.vibe) try { navigator.vibrate && navigator.vibrate(pattern); } catch {} }
+
+let wakeLock = null;
+async function keepAwake() { try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch {} }
+function releaseAwake() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
+
+/* Session engine */
+let plan = buildPlan(currentCfg(), settings.warm);
+const state = { status: 'idle', base: 0, t0: 0, idx: -1 };
+let loop = null;
+
+const elapsed = () => state.status === 'running' ? state.base + (performance.now() - state.t0) / 1000 : state.base;
+const segAt = t => { for (let i = plan.segs.length - 1; i >= 0; i--) if (t >= plan.segs[i].start) return i; return 0; };
+const busy = () => state.status === 'running' || state.status === 'paused';
+
+function split(t) {
+  let run = 0, walk = 0;
+  for (const s of plan.segs) {
+    const d = Math.min(Math.max(t - s.start, 0), s.dur);
+    if (s.type === 'run') run += d; else if (s.type !== 'ready') walk += d;
+  }
+  return { run, walk };
+}
+const kcalOf = (run, walk) => {
+  const kg = parseFloat(settings.kg);
+  return kg > 0 ? Math.round((run * MET_RUN + walk * MET_WALK) / 3600 * kg) : null;
+};
+
+function start() {
+  ensureAudio();
+  plan = buildPlan(currentCfg(), settings.warm);
+  Object.assign(state, { status: 'running', base: 0, t0: performance.now(), idx: -1 });
+  buildTimeline();
+  scheduleFrom(0);
+  run();
+  $('doneCard').hidden = true;
+  renderLevels();
+}
+function run() {
+  clearInterval(loop);
+  loop = setInterval(tick, 200);
+  keepAwake();
+  tick();
+}
+function pause() {
+  state.base = elapsed();
+  state.status = 'paused';
+  clearInterval(loop);
+  cancelScheduled();
+  releaseAwake();
+  try { speechSynthesis.cancel(); } catch {}
+  render(state.base, state.idx);
+}
+function resume() {
+  ensureAudio();
+  state.status = 'running';
+  state.t0 = performance.now();
+  scheduleFrom(state.base);
+  run();
+}
+function skip() {
+  const i = segAt(elapsed()), next = plan.segs[i + 1];
+  if (!next) return finish(true);
+  state.base = next.start;
+  state.t0 = performance.now();
+  if (state.status === 'running') { scheduleFrom(next.start); playNow(soundFor(next.type)); tick(); }
+  else { enter(i + 1, i); render(state.base, i + 1); }
+}
+function stopAll() {
+  clearInterval(loop);
+  cancelScheduled();
+  releaseAwake();
+  state.status = 'idle';
+  state.idx = -1;
+}
+function finish(manual) {
+  if (manual) { ensureAudio(); if (ctx) SOUNDS.done(ctx.destination, ctx.currentTime + 0.03); }
+  stopAll();
+  state.status = 'done';
+  state.base = plan.total;
+  const e = record(true, plan.total);
+  say('Session complete. Nice work.');
+  buzz([200, 100, 200, 100, 600]);
+  showDone('Session complete', e);
+  render(plan.total, plan.segs.length - 1);
+  renderLevels();
+}
+function endEarly() {
+  const t = elapsed();
+  stopAll();
+  try { speechSynthesis.cancel(); } catch {}
+  if (t >= 60) showDone('Ended early', record(false, t));
+  else $('doneCard').hidden = true;
+  renderIdle();
+}
+
+function tick() {
+  if (state.status !== 'running') return;
+  const t = elapsed();
+  if (t >= plan.total) return finish(false);
+  const i = segAt(t);
+  if (i !== state.idx) enter(i, state.idx);
+  render(t, i);
+}
+function enter(i, prev) {
+  state.idx = i;
+  const s = plan.segs[i];
+  [...$('timeline').children].forEach((el, k) => el.classList.toggle('past', k < i));
+  if (prev === -1) {
+    say(s.type === 'warm' ? 'Warm up. Brisk walk for five minutes.' : 'Get ready.');
+    return;
+  }
+  const n = plan.cfg.rounds;
+  const words = {
+    run: s.round === n ? 'Run. Last round.' : `Run. Round ${s.round} of ${n}.`,
+    walk: 'Walk.',
+    cool: 'Cool down. Walk easy.',
+  }[s.type];
+  setTimeout(() => say(words), 650);
+  buzz(s.type === 'run' ? [250, 100, 250, 100, 250] : [700]);
+}
+
+/* Rendering */
+const stage = $('stage');
+function buildTimeline() {
+  $('timeline').replaceChildren(...plan.segs.map(s => h('div', { class: `seg ${s.type}`, style: `--d:${s.dur}` })));
+}
+function setMarker(t) { $('marker').style.left = `${(t / plan.total) * 100}%`; }
+
+function render(t, i) {
+  const s = plan.segs[i], next = plan.segs[i + 1];
+  const done = state.status === 'done';
+  stage.dataset.phase = done ? 'done' : s.type;
+  stage.classList.toggle('live', !done);
+  stage.classList.toggle('paused', state.status === 'paused');
+  $('phaseLabel').textContent = done ? 'Done' : PHASE[s.type].name + (state.status === 'paused' ? ' · Paused' : '');
+  $('roundLabel').textContent = done ? cfgName(plan.cfg) : s.round ? `Round ${s.round} / ${plan.cfg.rounds}` : cfgName(plan.cfg);
+  $('clock').textContent = done ? fmtClock(plan.total) : fmtClock(s.start + s.dur - t);
+  $('tip').textContent = done ? 'Logged below. Drink some water and stretch your calves.' : PHASE[s.type].tip;
+  $('nextLabel').textContent = done ? '' : next ? `Next: ${PHASE[next.type].name} ${fmt(next.dur)}` : 'Last stretch';
+  $('elapsed').textContent = fmt(t);
+  $('remaining').textContent = fmt(plan.total - t);
+  setMarker(t);
+  $('btnStart').textContent = state.status === 'running' ? 'Pause' : state.status === 'paused' ? 'Resume' : 'Start again';
+  $('btnSkip').disabled = $('btnStop').disabled = !busy();
+}
+function renderIdle() {
+  if (busy()) return;
+  state.status = 'idle';
+  plan = buildPlan(currentCfg(), settings.warm);
+  buildTimeline();
+  stage.dataset.phase = 'idle';
+  stage.classList.remove('live', 'paused');
+  $('phaseLabel').textContent = cfgName(plan.cfg);
+  $('roundLabel').textContent = cfgLabel(plan.cfg);
+  $('clock').textContent = fmtClock(plan.total);
+  $('tip').textContent = `Total time, with ${fmtMin(split(plan.total).run)} min of running.`;
+  $('nextLabel').textContent = settings.warm ? 'Starts with a 5 min warm-up walk' : 'Starts after a 5 sec countdown';
+  $('elapsed').textContent = '0:00';
+  $('remaining').textContent = fmt(plan.total);
+  setMarker(0);
+  $('btnStart').textContent = 'Start';
+  $('btnSkip').disabled = $('btnStop').disabled = true;
+  renderLevels();
+}
+function showDone(title, e) {
+  const k = kcalOf(e.run, e.walk);
+  $('doneTitle').textContent = title;
+  $('doneText').textContent = `${fmt(e.run + e.walk)} active, ${fmt(e.run)} of it running` + (k ? `, about ${k} kcal.` : '.');
+  $('doneCard').hidden = false;
+}
+
+const completedAt = id => log.filter(e => e.complete && e.level === id).length;
+
+function renderLevels() {
+  const off = busy();
+  const rows = LEVELS.map(l => {
+    const n = completedAt(l.id);
+    return h('li', null, h('button', { type: 'button', class: 'level', 'data-level': l.id, 'aria-pressed': String(settings.level === l.id), disabled: off },
+      h('span', { class: 'lv' }, `L${l.id}`),
+      h('span', { class: 'desc' },
+        h('b', null, `${fmt(l.run)} run · ${fmt(l.walk)} walk`),
+        h('small', null, `× ${l.rounds} rounds · ${fmtMin(buildPlan(l, settings.warm).total)} min total`)),
+      h('span', { class: 'dots', title: `${n} completed` }, [0, 1, 2].map(k => h('i', { class: k < n ? 'dot on' : 'dot' })))));
+  });
+
+  const c = settings.custom, isC = settings.level === 'custom';
+  const field = (id, label, min, max, step, value) =>
+    h('label', { class: 'field' }, h('span', null, label), h('input', { id, type: 'number', min, max, step, value, disabled: off }));
+  rows.push(h('li', null,
+    h('button', { type: 'button', class: 'level', 'data-level': 'custom', 'aria-pressed': String(isC), disabled: off },
+      h('span', { class: 'lv' }, 'C'),
+      h('span', { class: 'desc' }, h('b', null, 'Custom'), h('small', null, isC ? cfgLabel(currentCfg()) : 'Set your own run, walk and rounds')),
+      h('span')),
+    isC && h('div', { class: 'custom' },
+      field('cRun', 'Run (min)', 0.25, 60, 0.25, c.run),
+      field('cWalk', 'Walk (min)', 0.25, 30, 0.25, c.walk),
+      field('cRounds', 'Rounds', 1, 40, 1, c.rounds))));
+  $('levels').replaceChildren(...rows);
+
+  const sel = settings.level, n = typeof sel === 'number' ? completedAt(sel) : 0;
+  const nudge = $('nudge');
+  if (typeof sel === 'number' && n >= 3 && sel < LEVELS.length) {
+    nudge.textContent = `You've finished L${sel} ${n} times. If the last session felt comfortable, move up to L${sel + 1}.`;
+    nudge.hidden = false;
+  } else nudge.hidden = true;
+}
+
+function weekStart(d = new Date()) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+function renderLog() {
+  const ws = weekStart(), we = new Date(ws); we.setDate(we.getDate() + 6);
+  const df = { day: 'numeric', month: 'short' };
+  $('weekRange').textContent = `${ws.toLocaleDateString(undefined, df)} – ${we.toLocaleDateString(undefined, df)}`;
+  const week = log.filter(e => e.ts >= ws.getTime());
+  const sum = week.reduce((a, e) => ({ run: a.run + e.run, walk: a.walk + e.walk }), { run: 0, walk: 0 });
+  const mins = Math.round((sum.run + sum.walk) / 60);
+  const k = kcalOf(sum.run, sum.walk);
+  $('stSessions').textContent = week.length;
+  $('stMin').textContent = mins;
+  $('stRun').textContent = Math.round(sum.run / 60);
+  $('stKcal').textContent = k === null ? '–' : k;
+  $('meterFill').style.width = `${Math.min(100, mins / WEEK_GOAL * 100)}%`;
+  $('meterText').textContent = mins >= WEEK_GOAL
+    ? `${mins} min this week. You've passed the ${WEEK_GOAL}-minute target.`
+    : `${mins} of ${WEEK_GOAL} min this week. ${WEEK_GOAL - mins} to go.` + (k === null ? ' Add your weight in Settings to see calories.' : '');
+
+  const rows = log.slice(0, 10).map(e => {
+    const d = new Date(e.ts);
+    const when = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return h('li', { class: 'log-row' },
+      h('span', { class: 'when' }, when),
+      h('span', { class: 'what' }, `${e.level === 'custom' ? 'Custom' : 'L' + e.level} · ${e.label}`),
+      h('span', { class: 'num' }, h('b', null, String(Math.round((e.run + e.walk) / 60))), ' min',
+        h('span', { class: 'tag' }, e.complete ? `${Math.round(e.run / 60)} min run` : 'ended early')));
+  });
+  $('logList').replaceChildren(...(rows.length ? rows : [h('li', { class: 'empty' }, 'No sessions yet. Finish or end a session and it will show up here.')]));
+  $('btnClear').hidden = !log.length;
+}
+function record(complete, t) {
+  const sp = split(t);
+  const e = { ts: Date.now(), level: plan.cfg.id, label: cfgLabel(plan.cfg), run: Math.round(sp.run), walk: Math.round(sp.walk), complete };
+  log.unshift(e);
+  log = log.slice(0, 300);
+  store.set('rwl.log', log);
+  renderLog();
+  return e;
+}
+
+/* Wiring */
+// two-tap confirm, since the viewer blocks confirm()
+function armed(btn, label, action) {
+  if (btn.classList.contains('armed')) { btn.classList.remove('armed'); clearTimeout(btn._t); btn.textContent = btn._label; action(); return; }
+  btn._label = btn.textContent;
+  btn.textContent = label;
+  btn.classList.add('armed');
+  btn._t = setTimeout(() => { btn.classList.remove('armed'); btn.textContent = btn._label; }, 3000);
+}
+
+$('btnStart').addEventListener('click', () => {
+  if (state.status === 'running') pause();
+  else if (state.status === 'paused') resume();
+  else start();
+});
+$('btnSkip').addEventListener('click', skip);
+$('btnStop').addEventListener('click', e => armed(e.currentTarget, 'Sure?', endEarly));
+$('btnClear').addEventListener('click', e => armed(e.currentTarget, 'Tap again to delete all', () => {
+  log = []; store.set('rwl.log', log); renderLog(); renderLevels();
+}));
+$('btnTest').addEventListener('click', () => {
+  ensureAudio();
+  if (!ctx) return;
+  SOUNDS.run(ctx.destination, ctx.currentTime + 0.05);
+  SOUNDS.walk(ctx.destination, ctx.currentTime + 1.0);
+});
+
+$('levels').addEventListener('click', e => {
+  const b = e.target.closest('.level');
+  if (!b || b.disabled) return;
+  const v = b.dataset.level;
+  settings.level = v === 'custom' ? 'custom' : Number(v);
+  saveSettings();
+  $('doneCard').hidden = true;
+  renderIdle();
+});
+$('levels').addEventListener('change', e => {
+  const key = { cRun: 'run', cWalk: 'walk', cRounds: 'rounds' }[e.target.id];
+  let v = parseFloat(e.target.value);
+  if (!key || !(v > 0)) return;
+  if (key === 'rounds') v = Math.min(40, Math.round(v));
+  settings.custom[key] = v;
+  saveSettings();
+  renderIdle();
+});
+
+const bindSwitch = (id, key, after) => {
+  const el = $(id);
+  el.checked = !!settings[key];
+  el.addEventListener('change', () => { settings[key] = el.checked; saveSettings(); after && after(); });
+};
+bindSwitch('optWarm', 'warm', renderIdle);
+bindSwitch('optVoice', 'voice');
+bindSwitch('optVibe', 'vibe');
+$('optKg').value = settings.kg;
+$('optKg').addEventListener('input', e => { settings.kg = e.target.value; saveSettings(); renderLog(); });
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.status === 'running') { keepAwake(); tick(); }
+});
+
+renderIdle();
+renderLog();
+</script>
+</body>
+</html>
